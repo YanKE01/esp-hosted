@@ -109,9 +109,12 @@ static uint8_t get_capabilities()
 #if CONFIG_ESP_SPI_HOST_INTERFACE
     ESP_LOGI(TAG, "- WLAN over SPI");
     cap |= ESP_WLAN_SPI_SUPPORT;
-#else
+#elif CONFIG_ESP_SDIO_HOST_INTERFACE
     ESP_LOGI(TAG, "- WLAN over SDIO");
     cap |= ESP_WLAN_SDIO_SUPPORT;
+#elif CONFIG_ESP_USB_HOST_INTERFACE
+    ESP_LOGI(TAG, "- WLAN over USB");
+    cap |= ESP_WLAN_SDIO_SUPPORT; // TODO: Add USB support
 #endif
 
 #if CONFIG_ESP_SPI_CHECKSUM || CONFIG_ESP_SDIO_CHECKSUM

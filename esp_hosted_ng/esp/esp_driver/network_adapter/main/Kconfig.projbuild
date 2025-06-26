@@ -4,7 +4,7 @@ menu "Example Configuration"
         bool "Transport layer"
         default ESP_SDIO_HOST_INTERFACE if IDF_TARGET_ESP32
         default ESP_SPI_HOST_INTERFACE if IDF_TARGET_ESP32S2
-        default ESP_SPI_HOST_INTERFACE if IDF_TARGET_ESP32S3
+        default ESP_USB_HOST_INTERFACE if IDF_TARGET_ESP32S3
         default ESP_SPI_HOST_INTERFACE if IDF_TARGET_ESP32C2
         default ESP_SPI_HOST_INTERFACE if IDF_TARGET_ESP32C3
         default ESP_SDIO_HOST_INTERFACE if IDF_TARGET_ESP32C6
@@ -22,6 +22,12 @@ menu "Example Configuration"
             bool "SPI interface"
             help
                 Enable/Disable SPI host interface
+
+        config ESP_USB_HOST_INTERFACE
+            bool "USB interface"
+            help
+                Enable/Disable USB host interface
+
     endchoice
 
     menu "SPI Configuration"
@@ -126,7 +132,7 @@ menu "Example Configuration"
 
     config ESP_OTA_WORKAROUND
         bool "OTA workaround - Add sleeps while OTA write"
-        default y
+        default n
         help
             Enable/disable sleeps while OTA operations
 
