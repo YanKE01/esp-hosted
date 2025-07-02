@@ -12,7 +12,7 @@ ifeq ($(ARCH), aarch64)
 endif
 
 # Module name (default: sdio)
-target ?= sdio
+target ?= usb
 MODULE_NAME := esp32_$(target)
 
 # Debug and AP support
@@ -37,6 +37,12 @@ ifeq ($(target), spi)
     ccflags-y += -I$(src)/spi -I$(CURDIR)/spi
     EXTRA_CFLAGS += -I$(M)/spi
     module_objects += spi/esp_spi.o
+endif
+
+ifeq ($(target), usb)
+    ccflags-y += -I$(src)/usb -I$(CURDIR)/usb
+    EXTRA_CFLAGS += -I$(M)/usb
+    module_objects += usb/esp_usb.o
 endif
 
 # Common source files

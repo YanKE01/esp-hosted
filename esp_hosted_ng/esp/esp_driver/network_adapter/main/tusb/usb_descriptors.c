@@ -65,6 +65,7 @@ char const *string_desc_arr [] = {
     USB_MANUFACTURER,                 // 1: Manufacturer
     "ESP_Bulk_Trans",              // 2: Product
     "012-2021",                       // 3: Serials, should use chip ID
+    "TUSB",                          // 4: Interface 0, Application
 };
 
 static uint16_t _desc_str[64];

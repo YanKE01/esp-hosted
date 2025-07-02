@@ -18,7 +18,7 @@
 
 #define MAX_PAYLOAD_SIZE CFG_TUD_VENDOR_RX_BUFSIZE
 #define HEADER_SIZE 4
-#define FRAME_QUEUE_SIZE 5
+#define FRAME_QUEUE_SIZE 10
 
 static interface_context_t context;
 static interface_handle_t if_handle_g;
@@ -35,6 +35,7 @@ typedef struct {
     uint8_t *data;
     uint16_t len;
 } usb_frame_t;
+
 static QueueHandle_t frame_queue;
 
 static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle_t *buf_handle);
@@ -202,7 +203,7 @@ esp_err_t send_bootup_event_to_host(uint8_t cap)
         return ESP_FAIL;
     }
 
-    uint8_t *sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA);
+    uint8_t *sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
 
     if (!sendbuf) {
         ESP_LOGE(TAG, "Failed to allocate USB-wrapped buffer");
@@ -265,16 +266,19 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
             return;
         }
 
+        // ESP_LOGI(TAG, "Tud Rx: %d", read_len);
+
         if (!frame_active && read_len >= HEADER_SIZE) {
             // Decode header
             usb_packet_header_t *hdr = (usb_packet_header_t *)temp_buf;
-            expected_total = hdr->total_len;
-            expected_crc16 = hdr->crc16;
+            expected_total = le16toh(hdr->total_len);  // 修复字节序
+            expected_crc16 = le16toh(hdr->crc16);      // 修复字节序
 
             ESP_LOGI(TAG, "Header: total_len=%d, crc16=0x%04X", expected_total, expected_crc16);
 
             if (expected_total > MAX_PAYLOAD_SIZE) {
                 ESP_LOGE(TAG, "Payload too large");
+                frame_active = false;
                 return;
             }
 
@@ -300,27 +304,37 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
 
         // 验证数据的有效性
         if (frame_active && received_total >= expected_total) {
-            ESP_LOGI(TAG, "Frame received (%d bytes), computing CRC...", expected_total);
+            // ESP_LOGI(TAG, "Frame received (%d bytes), computing CRC...", expected_total);
 
             uint16_t calc_crc = crc16_ccitt(frame_buffer, expected_total, 0x0000);
             if (calc_crc == expected_crc16) {
                 ESP_LOGI(TAG, "CRC OK (0x%04X)", calc_crc);
             } else {
                 ESP_LOGE(TAG, "CRC MISMATCH! expected 0x%04X, got 0x%04X", expected_crc16, calc_crc);
+                frame_active = false;
+                received_total = 0;
+                expected_total = 0;
+                expected_crc16 = 0;
                 return;
             }
 
             usb_frame_t frame;
-            frame.data = malloc(expected_total);
+            frame.data = heap_caps_malloc(expected_total, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
             if (!frame.data) {
                 ESP_LOGE(TAG, "Failed to alloc USB frame");
+                frame_active = false;
+                received_total = 0;
+                expected_total = 0;
+                expected_crc16 = 0;
                 return;
             }
 
             memcpy(frame.data, frame_buffer, expected_total);
             frame.len = expected_total;
-            xQueueSend(frame_queue, &frame, 0);
-
+            if (xQueueSend(frame_queue, &frame, portMAX_DELAY) != pdTRUE) {
+                ESP_LOGE(TAG, "Frame queue full");
+                free(frame.data);
+            }
             // Reset statet
             frame_active = false;
             received_total = 0;
@@ -340,6 +354,7 @@ static interface_handle_t *esp_usb_init(void)
     }
     xTaskCreate(tusb_device_task, "tusb_device_task", 10 * 1024, NULL, 5, NULL);
 
+    // 创建接收队列
     frame_queue = xQueueCreate(FRAME_QUEUE_SIZE, sizeof(usb_frame_t));
     if (!frame_queue) {
         ESP_LOGE(TAG, "Failed to create frame queue");
@@ -377,16 +392,14 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
         return ESP_FAIL;
     }
 
-    sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA);
+    sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
     if (sendbuf == NULL) {
         ESP_LOGE(TAG, "Malloc send buffer fail!");
         return ESP_FAIL;
     }
 
-    memset(sendbuf, 0, total_len);
-
     usb_packet_header_t *usb_header  = (usb_packet_header_t *)sendbuf;
-    usb_header->total_len = htole16(sdio_len);  // 不含 USB header 本身
+    usb_header->total_len = htole16(sdio_len);  // 包含ESP payload header
     usb_header->crc16 = 0;                     // 最后计算
 
     header = (struct esp_payload_header *)(sendbuf + sizeof(usb_packet_header_t));
@@ -404,16 +417,19 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     uint8_t *crc_data = sendbuf + sizeof(usb_packet_header_t);
     usb_header->crc16 = htole16(crc16_ccitt(crc_data, sdio_len, 0x0000));
 
+    // 直接发送数据
     ret = tud_vendor_n_write(0, sendbuf, total_len);
     if (ret < 0) {
         ESP_LOGE(TAG, "Failed to send USB packet, ret:%d", ret);
         free(sendbuf);
         return ESP_FAIL;
     }
-    tud_vendor_n_flush(0);
 
+    tud_vendor_n_flush(0); // 立即发出
     free(sendbuf);
-    return 0;
+
+    ESP_LOGI(TAG, "USB packet sent directly, total_len:%ld", total_len);
+    return buf_handle->payload_len;
 }
 
 static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t *buf_handle)
@@ -432,14 +448,14 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
     }
     usb_frame_t received_frame;
 
-    if (xQueueReceive(frame_queue, &received_frame, 200) != pdTRUE) {
+    if (xQueueReceive(frame_queue, &received_frame, portMAX_DELAY) != pdTRUE) {
         ESP_LOGW(TAG, "Timeout waiting for USB frame");
         return ESP_ERR_TIMEOUT;
     }
 
     buf_handle->payload = received_frame.data;
-    buf_handle->payload_len = received_frame.len;
-    buf_handle->free_buf_handle = esp_usb_free;
+    buf_handle->payload_len = received_frame.len & 0xFFFF;
+    buf_handle->free_buf_handle = free;
 
     header = (struct esp_payload_header *) buf_handle->payload;
     len = le16toh(header->len) + le16toh(header->offset);
@@ -453,4 +469,16 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
 static void esp_usb_deinit(interface_handle_t *handle)
 {
     ESP_LOGI(TAG, "USB deinit");
+    
+    // 清理接收队列
+    if (frame_queue) {
+        usb_frame_t frame;
+        while (xQueueReceive(frame_queue, &frame, 0) == pdTRUE) {
+            if (frame.data) {
+                free(frame.data);
+            }
+        }
+        vQueueDelete(frame_queue);
+        frame_queue = NULL;
+    }
 }

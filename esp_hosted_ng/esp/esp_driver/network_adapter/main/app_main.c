@@ -114,7 +114,7 @@ static uint8_t get_capabilities()
     cap |= ESP_WLAN_SDIO_SUPPORT;
 #elif CONFIG_ESP_USB_HOST_INTERFACE
     ESP_LOGI(TAG, "- WLAN over USB");
-    cap |= ESP_WLAN_SDIO_SUPPORT; // TODO: Add USB support
+    cap |= ESP_WLAN_SPI_SUPPORT; // TODO: Add USB support
 #endif
 
 #if CONFIG_ESP_SPI_CHECKSUM || CONFIG_ESP_SDIO_CHECKSUM
@@ -519,6 +519,10 @@ void process_priv_commamd(uint8_t if_type, uint8_t *payload, uint16_t payload_le
 
 void process_rx_pkt(interface_buffer_handle_t *buf_handle)
 {
+    if (buf_handle == NULL || buf_handle->payload == NULL)
+    {
+        return;
+    }
     struct esp_payload_header *header = NULL;
     uint8_t *payload = NULL;
     uint16_t payload_len = 0;
@@ -593,7 +597,7 @@ void recv_task(void* pvParameters)
         if (if_context && if_context->if_ops && if_context->if_ops->read) {
             int len = if_context->if_ops->read(if_handle, &buf_handle);
             if (len <= 0) {
-                usleep(10 * 1000);
+                usleep(1 * 1000);
                 continue;
             }
         }
@@ -740,7 +744,7 @@ void app_main()
     }
 
     assert(xTaskCreate(recv_task, "recv_task", TASK_DEFAULT_STACK_SIZE, NULL, TASK_DEFAULT_PRIO, NULL) == pdTRUE);
-    assert(xTaskCreate(send_task, "send_task", TASK_DEFAULT_STACK_SIZE, NULL, TASK_DEFAULT_PRIO, NULL) == pdTRUE);
+    assert(xTaskCreate(send_task, "send_task", TASK_DEFAULT_STACK_SIZE - 1, NULL, TASK_DEFAULT_PRIO, NULL) == pdTRUE);
 
     create_debugging_tasks();
 

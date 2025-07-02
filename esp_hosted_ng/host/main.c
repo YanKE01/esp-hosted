@@ -795,6 +795,8 @@ static void process_rx_packet(struct esp_adapter *adapter, struct sk_buff *skb)
 			return;
 		}
 
+		pr_info("process_rx_packet: %d\n", payload_header->packet_type);
+
 		if (payload_header->packet_type == PACKET_TYPE_EAPOL) {
 			esp_dbg("Rx PACKET_TYPE_EAPOL!!!!\n");
 			esp_port_open(priv);
@@ -807,6 +809,8 @@ static void process_rx_packet(struct esp_adapter *adapter, struct sk_buff *skb)
 			skb->dev = priv->ndev;
 			skb->protocol = eth_type_trans(skb, priv->ndev);
 			skb->ip_summed = CHECKSUM_NONE;
+
+			pr_info("process_rx_packet skb_len: %d\n", skb->len);
 
 			priv->stats.rx_bytes += skb->len;
 			/* Forward skb to kernel */
