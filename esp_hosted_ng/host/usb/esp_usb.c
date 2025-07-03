@@ -148,93 +148,58 @@ static void esp_usb_submit_rx_urb(void)
 static void esp_usb_process_rx_data(u8 *data, int len)
 {
     struct sk_buff *rx_skb = NULL;
-    struct usb_packet_header *header;
     struct esp_payload_header *payload_header;
-    u16 expected_len, crc16_received, crc16_calculated;
     u8 priority_queue;
     
-    if (!data || len < sizeof(struct usb_packet_header))
+    if (!data || len < sizeof(struct esp_payload_header))
     {
         pr_err("esp_usb: Invalid RX data or too small: %d\n", len);
         return;
     }
     
-    /* Parse USB packet header */
-    header = (struct usb_packet_header *)data;
-    expected_len = le16_to_cpu(header->total_len);
-    crc16_received = le16_to_cpu(header->crc16);
+    /* Parse ESP payload header directly */
+    payload_header = (struct esp_payload_header *)data;
     
     /* Validate packet length */
-    if (expected_len + sizeof(struct usb_packet_header) > len)
+    if (len < sizeof(struct esp_payload_header))
     {
-        pr_err("esp_usb: Length mismatch: expected %lu, got %d\n",
-               expected_len + sizeof(struct usb_packet_header), len);
+        pr_err("esp_usb: Data too small for ESP header: %d\n", len);
         return;
     }
     
-    /* For incomplete packets, we might need to buffer them */
-    if (expected_len + sizeof(struct usb_packet_header) < len)
-    {
-        pr_warn("esp_usb: Received more data than expected: expected %lu, got %d\n",
-               expected_len + sizeof(struct usb_packet_header), len);
-        /* Continue processing with expected length */
-    }
-    
-    /* Calculate and verify CRC16 */
-    crc16_calculated = crc16_ccitt(data + sizeof(struct usb_packet_header),
-                                   expected_len, 0x0000);
-    if (crc16_calculated != crc16_received)
-    {
-        pr_err("esp_usb: CRC16 mismatch: received 0x%04x, calculated 0x%04x\n",
-               crc16_received, crc16_calculated);
-        return;
-    }
-    
-    /* Allocate SKB for payload */
-    rx_skb = esp_alloc_skb(expected_len);
+    /* Allocate SKB for the entire received data */
+    rx_skb = esp_alloc_skb(len);
     if (!rx_skb)
     {
         pr_err("esp_usb: Failed to allocate RX SKB\n");
         return;
     }
     
-    /* Copy payload data */
-    memcpy(skb_put(rx_skb, expected_len), 
-           data + sizeof(struct usb_packet_header), expected_len);
+    /* Copy all received data */
+    memcpy(skb_put(rx_skb, len), data, len);
     
-    /* Parse ESP payload header to determine priority */
-    if (expected_len >= sizeof(struct esp_payload_header))
+    /* Determine priority queue based on interface type */
+    if (payload_header->if_type == ESP_INTERNAL_IF)
     {
-        payload_header = (struct esp_payload_header *)rx_skb->data;
-        
-        /* Determine priority queue based on interface type */
-        if (payload_header->if_type == ESP_INTERNAL_IF)
-        {
-            priority_queue = PRIO_Q_HIGH;
-        }
-        else if (payload_header->if_type == ESP_HCI_IF)
-        {
-            priority_queue = PRIO_Q_MID;
-        }
-        else
-        {
-            priority_queue = PRIO_Q_LOW;
-        }
-        
-        /* Enqueue to appropriate priority queue */
-        skb_queue_tail(&usb_context.rx_q[priority_queue], rx_skb);
-        
-        /* Indicate reception of new packet */
-        esp_process_new_packet_intr(usb_context.adapter);
-        
-        pr_info("esp_usb: Received packet of size %u, type %u, priority %u\n",
-                expected_len, payload_header->if_type, priority_queue);
+        priority_queue = PRIO_Q_HIGH;
+    }
+    else if (payload_header->if_type == ESP_HCI_IF)
+    {
+        priority_queue = PRIO_Q_HIGH;
     }
     else
     {
-        pr_err("esp_usb: Payload too small for ESP header\n");
-        dev_kfree_skb(rx_skb);
+        priority_queue = PRIO_Q_HIGH;
     }
+    
+    /* Enqueue to appropriate priority queue */
+    skb_queue_tail(&usb_context.rx_q[priority_queue], rx_skb);
+    
+    /* Indicate reception of new packet */
+    esp_process_new_packet_intr(usb_context.adapter);
+    
+    pr_info("esp_usb: Received packet of size %u, type %u, priority %u\n",
+            len, payload_header->if_type, priority_queue);
 }
 
 static void open_data_path(void)
@@ -287,7 +252,7 @@ int esp_adjust_spi_clock(struct esp_adapter *adapter, u8 spi_clk_mhz)
 
 static int write_packet(struct esp_adapter *adapter, struct sk_buff *skb)
 {
-    u32 max_pkt_size = ESP_RX_BUFFER_SIZE - sizeof(struct esp_payload_header) - sizeof(struct usb_packet_header);
+    u32 max_pkt_size = ESP_RX_BUFFER_SIZE - sizeof(struct esp_payload_header);
     struct esp_payload_header *payload_header = (struct esp_payload_header *)skb->data;
     struct esp_skb_cb *cb = NULL;
 
@@ -340,11 +305,11 @@ static int write_packet(struct esp_adapter *adapter, struct sk_buff *skb)
     }
     else if (payload_header->if_type == ESP_HCI_IF)
     {
-        skb_queue_tail(&usb_context.tx_q[PRIO_Q_MID], skb);
+        skb_queue_tail(&usb_context.tx_q[PRIO_Q_HIGH], skb);
     }
     else
     {
-        skb_queue_tail(&usb_context.tx_q[PRIO_Q_LOW], skb);
+        skb_queue_tail(&usb_context.tx_q[PRIO_Q_HIGH], skb);
         atomic_inc(&tx_pending);
     }
 
@@ -407,7 +372,6 @@ static void esp_usb_tx_work(struct work_struct *work)
 {
     struct sk_buff *tx_skb = NULL;
     struct esp_skb_cb *cb = NULL;
-    struct usb_packet_header *header;
     struct sk_buff *usb_skb = NULL;
     u8 *usb_data;
     struct urb *tx_urb = NULL;
@@ -434,7 +398,7 @@ static void esp_usb_tx_work(struct work_struct *work)
         }
 
         /* Allocate USB packet with header */
-        usb_skb = esp_alloc_skb(tx_skb->len + sizeof(struct usb_packet_header));
+        usb_skb = esp_alloc_skb(tx_skb->len);
         if (!usb_skb)
         {
             pr_err("esp_usb: Failed to allocate USB packet\n");
@@ -443,15 +407,11 @@ static void esp_usb_tx_work(struct work_struct *work)
             return;
         }
 
-        /* Setup USB packet header */
-        usb_data = skb_put(usb_skb, tx_skb->len + sizeof(struct usb_packet_header));
-        header = (struct usb_packet_header *)usb_data;
-        header->total_len = cpu_to_le16(tx_skb->len);  // 包含ESP payload header
-        memcpy(usb_data + sizeof(struct usb_packet_header), tx_skb->data, tx_skb->len);
-        header->crc16 = cpu_to_le16(crc16_ccitt(tx_skb->data, tx_skb->len, 0x0000));
+        /* Setup USB packet - no header, just copy data directly */
+        usb_data = skb_put(usb_skb, tx_skb->len);
+        memcpy(usb_data, tx_skb->data, tx_skb->len);
 
-        pr_info("esp_usb: Sending USB packet: total_len=%u, data_len=%u, crc16=0x%04x\n",
-                usb_skb->len, tx_skb->len, le16_to_cpu(header->crc16));
+        pr_info("esp_usb: Sending USB packet: data_len=%u\n", tx_skb->len);
 
         // 新增：分配URB并异步发送
         tx_urb = usb_alloc_urb(0, GFP_ATOMIC);

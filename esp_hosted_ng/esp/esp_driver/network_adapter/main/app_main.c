@@ -597,7 +597,7 @@ void recv_task(void* pvParameters)
         if (if_context && if_context->if_ops && if_context->if_ops->read) {
             int len = if_context->if_ops->read(if_handle, &buf_handle);
             if (len <= 0) {
-                usleep(1 * 1000);
+                usleep(1 * 10);
                 continue;
             }
         }
@@ -743,7 +743,7 @@ void app_main()
         assert(to_host_queue[prio_q_idx] != NULL);
     }
 
-    assert(xTaskCreate(recv_task, "recv_task", TASK_DEFAULT_STACK_SIZE, NULL, TASK_DEFAULT_PRIO, NULL) == pdTRUE);
+    assert(xTaskCreate(recv_task, "recv_task", TASK_DEFAULT_STACK_SIZE, NULL, TASK_DEFAULT_PRIO -1 , NULL) == pdTRUE);
     assert(xTaskCreate(send_task, "send_task", TASK_DEFAULT_STACK_SIZE - 1, NULL, TASK_DEFAULT_PRIO, NULL) == pdTRUE);
 
     create_debugging_tasks();

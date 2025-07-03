@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <rom/rtc.h>
 #include "esp.h"
 #include "esp_log.h"
@@ -18,16 +19,23 @@
 
 #define MAX_PAYLOAD_SIZE CFG_TUD_VENDOR_RX_BUFSIZE
 #define HEADER_SIZE 4
-#define FRAME_QUEUE_SIZE 10
+#define FRAME_QUEUE_SIZE 20  // 增加队列大小，容纳更多帧
+#define USB_RX_BUF_NUM 20    // 增加缓冲区数量，匹配队列大小
 
 static interface_context_t context;
 static interface_handle_t if_handle_g;
+
+// 预分配的USB接收缓冲区
+static uint8_t usb_rx_buffer[USB_RX_BUF_NUM][MAX_PAYLOAD_SIZE];
+static bool usb_rx_buffer_used[USB_RX_BUF_NUM] = {false};
+static uint32_t buffer_alloc_count = 0;
+static uint32_t buffer_release_count = 0;
+static uint32_t emergency_alloc_count = 0;
 
 // 用于解析USB包
 static uint8_t frame_buffer[MAX_PAYLOAD_SIZE] = {0};
 static uint16_t received_total = 0;
 static uint16_t expected_total = 0;
-static uint16_t expected_crc16 = 0;
 static bool frame_active = false;
 
 // 队列缓冲区
@@ -42,14 +50,45 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
 static int esp_usb_read(interface_handle_t *handle, interface_buffer_handle_t *buf_handle);
 static void esp_usb_deinit(interface_handle_t *handle);
 static interface_handle_t *esp_usb_init(void);
-
-typedef struct __attribute__((packed))
-{
-    uint16_t total_len;
-    uint16_t crc16;
-} usb_packet_header_t;
+static void print_queue_status(void);
 
 static const char TAG[] = "FW_USB";
+
+// 获取可用的预分配缓冲区
+static uint8_t* get_available_rx_buffer(void)
+{
+    for (int i = 0; i < USB_RX_BUF_NUM; i++) {
+        if (!usb_rx_buffer_used[i]) {
+            usb_rx_buffer_used[i] = true;
+            buffer_alloc_count++;
+            ESP_LOGI(TAG, "Allocated RX buffer %d (total: %lu)", i, buffer_alloc_count);
+            return usb_rx_buffer[i];
+        }
+    }
+    
+    // 如果所有缓冲区都被占用，强制释放第一个缓冲区
+    ESP_LOGW(TAG, "All buffers in use, forcing release of buffer 0");
+    usb_rx_buffer_used[0] = false;
+    usb_rx_buffer_used[0] = true;
+    buffer_alloc_count++;
+    emergency_alloc_count++;
+    ESP_LOGI(TAG, "Emergency allocated RX buffer 0 (emergency: %lu)", emergency_alloc_count);
+    return usb_rx_buffer[0];
+}
+
+// 释放预分配缓冲区
+static void release_rx_buffer(void *buffer)
+{
+    for (int i = 0; i < USB_RX_BUF_NUM; i++) {
+        if (buffer == usb_rx_buffer[i]) {
+            usb_rx_buffer_used[i] = false;
+            buffer_release_count++;
+            ESP_LOGI(TAG, "Released RX buffer %d (total: %lu)", i, buffer_release_count);
+            return;
+        }
+    }
+    ESP_LOGE(TAG, "Attempted to release unknown buffer");
+}
 
 void tud_mount_cb(void)
 {
@@ -71,30 +110,6 @@ void tud_suspend_cb(bool remote_wakeup_en)
 void tud_resume_cb(void)
 {
     ESP_LOGI(TAG, "USB resumed");
-}
-
-static void IRAM_ATTR esp_usb_free(void *handle)
-{
-    if (handle) {
-        free(handle);
-        handle = NULL;
-    }
-}
-
-static uint16_t crc16_ccitt(const uint8_t *data, uint16_t len, uint16_t init)
-{
-    uint16_t crc = init;
-    while (len--) {
-        crc ^= (*data++) << 8;
-        for (int i = 0; i < 8; i++) {
-            if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    return crc;
 }
 
 if_ops_t if_ops = {
@@ -195,43 +210,24 @@ esp_err_t send_bootup_event_to_host(uint8_t cap)
 #endif
 
     // 构造USB包
-    int32_t total_len = buf_handle.payload_len + sizeof(usb_packet_header_t);
+    int32_t total_len = buf_handle.payload_len;
 
     if (total_len > MAX_PAYLOAD_SIZE) {
-        ESP_LOGE(TAG, "Payload size too large, max:%d, current:%ld", MAX_PAYLOAD_SIZE, total_len);
+        ESP_LOGE(TAG, "Payload size too large, max:%" PRIu16 ", current:%" PRId32, MAX_PAYLOAD_SIZE, total_len);
         free(buf_handle.payload);
         return ESP_FAIL;
     }
 
-    uint8_t *sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
-
-    if (!sendbuf) {
-        ESP_LOGE(TAG, "Failed to allocate USB-wrapped buffer");
-        free(buf_handle.payload);
-        return ESP_FAIL;
-    }
-
-    usb_packet_header_t *usb_header = (usb_packet_header_t *)sendbuf;
-    usb_header->total_len = htole16(buf_handle.payload_len);
-
-    usb_header->crc16 = htole16(crc16_ccitt(buf_handle.payload, buf_handle.payload_len, 0x0000));
-
-    memcpy(sendbuf + sizeof(usb_packet_header_t), buf_handle.payload, buf_handle.payload_len);
-
-    ESP_LOGI(TAG, "Send_bootup_event_to_host. Len: %ld, crc: 0x%04x", total_len, usb_header->crc16);
-
-    ret = tud_vendor_n_write(0, sendbuf, total_len);
+    ret = tud_vendor_n_write(0, buf_handle.payload, total_len);
 
     if (ret < 0) {
         ESP_LOGE(TAG, "Failed to send USB packet, ret:%d", ret);
-        free(sendbuf);
         free(buf_handle.payload);
         return ESP_FAIL;
     }
 
     tud_vendor_n_flush(0); // 立马发出
 
-    free(sendbuf);
     free(buf_handle.payload);
 
     return ESP_OK;
@@ -260,21 +256,21 @@ static void tusb_device_task(void *pvParameters)
 void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
 {
     while (tud_vendor_n_available(itf)) {
-        uint8_t temp_buf[VENDOR_BUF_SIZE];
+        uint8_t temp_buf[bufsize];
         int read_len = tud_vendor_n_read(itf, temp_buf, sizeof(temp_buf));
         if (read_len <= 0) {
             return;
         }
 
-        // ESP_LOGI(TAG, "Tud Rx: %d", read_len);
+        if (!frame_active && read_len >= sizeof(struct esp_payload_header)) {
+            // 解析ESP payload header
+            struct esp_payload_header *header = (struct esp_payload_header *)temp_buf;
+            uint16_t payload_len = le16toh(header->len);
+            uint16_t offset = le16toh(header->offset);
+            
+            expected_total = offset + payload_len;
 
-        if (!frame_active && read_len >= HEADER_SIZE) {
-            // Decode header
-            usb_packet_header_t *hdr = (usb_packet_header_t *)temp_buf;
-            expected_total = le16toh(hdr->total_len);  // 修复字节序
-            expected_crc16 = le16toh(hdr->crc16);      // 修复字节序
-
-            ESP_LOGI(TAG, "Header: total_len=%d, crc16=0x%04X", expected_total, expected_crc16);
+            ESP_LOGI(TAG, "Header: payload_len=%d, offset=%d, expected_total=%d", payload_len, offset, expected_total);
 
             if (expected_total > MAX_PAYLOAD_SIZE) {
                 ESP_LOGE(TAG, "Payload too large");
@@ -285,14 +281,14 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
             frame_active = true;
             received_total = 0;
 
-            // Copy data from first packet (excluding header)
-            int data_len = read_len - HEADER_SIZE;
+            // 复制第一个包的数据
+            int data_len = read_len;
             if (data_len > 0) {
-                memcpy(frame_buffer, temp_buf + HEADER_SIZE, data_len);
+                memcpy(frame_buffer, temp_buf, data_len);
                 received_total = data_len;
             }
         } else if (frame_active) {
-            // Concatenate remaining packet data
+            // 拼接剩余包数据
             int remain = expected_total - received_total;
             int to_copy = (read_len > remain) ? remain : read_len;
 
@@ -302,46 +298,71 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
             }
         }
 
-        // 验证数据的有效性
+        // 验证数据的完整性
         if (frame_active && received_total >= expected_total) {
-            // ESP_LOGI(TAG, "Frame received (%d bytes), computing CRC...", expected_total);
+            ESP_LOGI(TAG, "Frame received (%d bytes)", expected_total);
 
-            uint16_t calc_crc = crc16_ccitt(frame_buffer, expected_total, 0x0000);
-            if (calc_crc == expected_crc16) {
-                ESP_LOGI(TAG, "CRC OK (0x%04X)", calc_crc);
-            } else {
-                ESP_LOGE(TAG, "CRC MISMATCH! expected 0x%04X, got 0x%04X", expected_crc16, calc_crc);
-                frame_active = false;
-                received_total = 0;
-                expected_total = 0;
-                expected_crc16 = 0;
-                return;
+            // 使用预分配的缓冲区
+            uint8_t *rx_buffer = get_available_rx_buffer();
+            if (!rx_buffer) {
+                // 如果缓冲区耗尽，强制释放第一个缓冲区并继续处理
+                ESP_LOGW(TAG, "Buffer exhaustion, forcing release of buffer 0");
+                release_rx_buffer(usb_rx_buffer[0]);
+                rx_buffer = get_available_rx_buffer();
+                if (!rx_buffer) {
+                    ESP_LOGE(TAG, "Critical: Still no buffer available after force release");
+                    frame_active = false;
+                    received_total = 0;
+                    expected_total = 0;
+                    return;
+                }
             }
 
             usb_frame_t frame;
-            frame.data = heap_caps_malloc(expected_total, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
-            if (!frame.data) {
-                ESP_LOGE(TAG, "Failed to alloc USB frame");
-                frame_active = false;
-                received_total = 0;
-                expected_total = 0;
-                expected_crc16 = 0;
-                return;
-            }
-
-            memcpy(frame.data, frame_buffer, expected_total);
+            frame.data = rx_buffer;
             frame.len = expected_total;
+            
+            // 复制数据到预分配缓冲区
+            memcpy(frame.data, frame_buffer, expected_total);
+            
+            // 使用阻塞方式入队，确保数据不丢失
             if (xQueueSend(frame_queue, &frame, portMAX_DELAY) != pdTRUE) {
-                ESP_LOGE(TAG, "Frame queue full");
-                free(frame.data);
+                // 如果100ms内无法入队，说明队列已满，这是异常情况
+                ESP_LOGE(TAG, "Queue full timeout, dropping frame (this should not happen)");
+                release_rx_buffer(frame.data);
+            } else {
+                ESP_LOGI(TAG, "Frame queued successfully, len: %d", expected_total);
+                
+                // 打印当前队列状态
+                print_queue_status();
             }
-            // Reset statet
+            
+            // 重置状态
             frame_active = false;
             received_total = 0;
             expected_total = 0;
-            expected_crc16 = 0;
         }
+    }
+}
 
+// 队列状态监控
+static void print_queue_status(void)
+{
+    if (frame_queue) {
+        int queue_count = uxQueueMessagesWaiting(frame_queue);
+        int used_buffers = 0;
+        for (int i = 0; i < USB_RX_BUF_NUM; i++) {
+            if (usb_rx_buffer_used[i]) {
+                used_buffers++;
+            }
+        }
+        
+        ESP_LOGI(TAG, "Queue status: %d/%d frames, Buffers: %d/%d used", 
+                 queue_count, FRAME_QUEUE_SIZE, used_buffers, USB_RX_BUF_NUM);
+        
+        if (queue_count > FRAME_QUEUE_SIZE * 2 / 3) {
+            ESP_LOGW(TAG, "High queue utilization: %d%%", (queue_count * 100) / FRAME_QUEUE_SIZE);
+        }
     }
 }
 
@@ -352,7 +373,7 @@ static interface_handle_t *esp_usb_init(void)
         ESP_LOGE(TAG, "TinyUSB init failed");
         return NULL;
     }
-    xTaskCreate(tusb_device_task, "tusb_device_task", 10 * 1024, NULL, 5, NULL);
+    xTaskCreate(tusb_device_task, "tusb_device_task", 10 * 1024, NULL, 14, NULL);
 
     // 创建接收队列
     frame_queue = xQueueCreate(FRAME_QUEUE_SIZE, sizeof(usb_frame_t));
@@ -361,15 +382,28 @@ static interface_handle_t *esp_usb_init(void)
         return NULL;
     }
 
+    // 初始化预分配缓冲区状态
+    for (int i = 0; i < USB_RX_BUF_NUM; i++) {
+        usb_rx_buffer_used[i] = false;
+    }
+
+    // 初始化帧接收状态
+    frame_active = false;
+    received_total = 0;
+    expected_total = 0;
+
     memset(&if_handle_g, 0, sizeof(if_handle_g));
     if_handle_g.state = INIT;
+    
+    ESP_LOGI(TAG, "USB init completed - Queue: %d frames, Buffers: %d, Max payload: %d bytes", 
+             FRAME_QUEUE_SIZE, USB_RX_BUF_NUM, MAX_PAYLOAD_SIZE);
     return &if_handle_g;
 }
 
 static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle_t *buf_handle)
 {
     esp_err_t ret = ESP_OK;
-    int32_t total_len = 0, sdio_len = 0;
+    int32_t total_len = 0;
     uint16_t offset = 0;
     struct esp_payload_header *header = NULL;
     uint8_t *sendbuf = NULL;
@@ -380,29 +414,24 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     }
 
     if (!buf_handle->payload_len || !buf_handle->payload) {
-        ESP_LOGE(TAG, "Invalid arguments, len:%d", buf_handle->payload_len);
+        ESP_LOGE(TAG, "Invalid arguments, len:%" PRIu16, buf_handle->payload_len);
         return ESP_FAIL;
     }
 
-    sdio_len = buf_handle->payload_len + sizeof(struct esp_payload_header);
-    total_len = sdio_len + sizeof(usb_packet_header_t);
+    total_len = buf_handle->payload_len + sizeof(struct esp_payload_header);
 
     if (total_len > MAX_PAYLOAD_SIZE) {
-        ESP_LOGE(TAG, "Payload size too large, max:%d, current:%ld", MAX_PAYLOAD_SIZE, total_len);
+        ESP_LOGE(TAG, "Payload size too large, max:%" PRIu16 ", current:%" PRId32, MAX_PAYLOAD_SIZE, total_len);
         return ESP_FAIL;
     }
 
-    sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    sendbuf = heap_caps_malloc(total_len, MALLOC_CAP_DMA);
     if (sendbuf == NULL) {
         ESP_LOGE(TAG, "Malloc send buffer fail!");
         return ESP_FAIL;
     }
 
-    usb_packet_header_t *usb_header  = (usb_packet_header_t *)sendbuf;
-    usb_header->total_len = htole16(sdio_len);  // 包含ESP payload header
-    usb_header->crc16 = 0;                     // 最后计算
-
-    header = (struct esp_payload_header *)(sendbuf + sizeof(usb_packet_header_t));
+    header = (struct esp_payload_header *)(sendbuf);
 
     header->if_type = buf_handle->if_type;
     header->if_num = buf_handle->if_num;
@@ -414,8 +443,6 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
 
     memcpy((uint8_t *)header + offset, buf_handle->payload, buf_handle->payload_len);
 
-    uint8_t *crc_data = sendbuf + sizeof(usb_packet_header_t);
-    usb_header->crc16 = htole16(crc16_ccitt(crc_data, sdio_len, 0x0000));
 
     // 直接发送数据
     ret = tud_vendor_n_write(0, sendbuf, total_len);
@@ -428,7 +455,7 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     tud_vendor_n_flush(0); // 立即发出
     free(sendbuf);
 
-    ESP_LOGI(TAG, "USB packet sent directly, total_len:%ld", total_len);
+    ESP_LOGI(TAG, "USB packet sent directly, total_len:%" PRId32, total_len);
     return buf_handle->payload_len;
 }
 
@@ -436,9 +463,10 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
 {
     struct esp_payload_header *header = NULL;
     uint16_t len = 0;
+    usb_frame_t received_frame;
 
     if (!if_handle) {
-        ESP_LOGE(TAG, "Invalid arguments to sdio_read");
+        ESP_LOGE(TAG, "Invalid arguments to esp_usb_read");
         return ESP_FAIL;
     }
 
@@ -446,16 +474,18 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
         ESP_LOGE(TAG, "USB not active");
         return ESP_FAIL;
     }
-    usb_frame_t received_frame;
 
+    // 从队列中读取数据，使用较短的超时时间
     if (xQueueReceive(frame_queue, &received_frame, portMAX_DELAY) != pdTRUE) {
         ESP_LOGW(TAG, "Timeout waiting for USB frame");
         return ESP_ERR_TIMEOUT;
     }
 
+    // 直接使用队列中的数据指针
     buf_handle->payload = received_frame.data;
-    buf_handle->payload_len = received_frame.len & 0xFFFF;
-    buf_handle->free_buf_handle = free;
+    buf_handle->payload_len = received_frame.len;
+    buf_handle->priv_buffer_handle = received_frame.data;  // 设置私有缓冲区句柄
+    buf_handle->free_buf_handle = release_rx_buffer;
 
     header = (struct esp_payload_header *) buf_handle->payload;
     len = le16toh(header->len) + le16toh(header->offset);
@@ -463,6 +493,9 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
     buf_handle->if_type = header->if_type;
     buf_handle->if_num = header->if_num;
 
+    // 打印队列状态，帮助监控处理速度
+    print_queue_status();
+    
     return len;
 }
 
@@ -470,15 +503,35 @@ static void esp_usb_deinit(interface_handle_t *handle)
 {
     ESP_LOGI(TAG, "USB deinit");
     
+    // 打印缓冲区使用统计
+    ESP_LOGI(TAG, "Buffer stats - Allocated: %lu, Released: %lu, Emergency: %lu", 
+             buffer_alloc_count, buffer_release_count, emergency_alloc_count);
+    
     // 清理接收队列
     if (frame_queue) {
         usb_frame_t frame;
+        // 清空队列中的所有帧，释放预分配缓冲区
         while (xQueueReceive(frame_queue, &frame, 0) == pdTRUE) {
             if (frame.data) {
-                free(frame.data);
+                release_rx_buffer(frame.data);
             }
         }
         vQueueDelete(frame_queue);
         frame_queue = NULL;
     }
+    
+    // 重置帧接收状态
+    frame_active = false;
+    received_total = 0;
+    expected_total = 0;
+    
+    // 重置预分配缓冲区状态
+    for (int i = 0; i < USB_RX_BUF_NUM; i++) {
+        usb_rx_buffer_used[i] = false;
+    }
+    
+    // 重置统计信息
+    buffer_alloc_count = 0;
+    buffer_release_count = 0;
+    emergency_alloc_count = 0;
 }
