@@ -5,3 +5,4 @@
 *.mod
 *.symvers
 *.order
+*.o.d

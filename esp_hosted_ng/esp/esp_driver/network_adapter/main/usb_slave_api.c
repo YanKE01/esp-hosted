@@ -20,10 +20,13 @@
 #define MAX_PAYLOAD_SIZE CFG_TUD_VENDOR_RX_BUFSIZE
 #define HEADER_SIZE 4
 #define FRAME_QUEUE_SIZE 20  // 增加队列大小，容纳更多帧
-#define USB_RX_BUF_NUM 20    // 增加缓冲区数量，匹配队列大小
+#define USB_RX_BUF_NUM 30    // 增加缓冲区数量，匹配队列大小
 
 static interface_context_t context;
 static interface_handle_t if_handle_g;
+
+// Add semaphore for USB TX completion
+static SemaphoreHandle_t usb_tx_sem = NULL;
 
 // 预分配的USB接收缓冲区
 static uint8_t usb_rx_buffer[USB_RX_BUF_NUM][MAX_PAYLOAD_SIZE];
@@ -61,7 +64,7 @@ static uint8_t* get_available_rx_buffer(void)
         if (!usb_rx_buffer_used[i]) {
             usb_rx_buffer_used[i] = true;
             buffer_alloc_count++;
-            ESP_LOGI(TAG, "Allocated RX buffer %d (total: %lu)", i, buffer_alloc_count);
+            // ESP_LOGI(TAG, "Allocated RX buffer %d (total: %lu)", i, buffer_alloc_count);
             return usb_rx_buffer[i];
         }
     }
@@ -72,7 +75,7 @@ static uint8_t* get_available_rx_buffer(void)
     usb_rx_buffer_used[0] = true;
     buffer_alloc_count++;
     emergency_alloc_count++;
-    ESP_LOGI(TAG, "Emergency allocated RX buffer 0 (emergency: %lu)", emergency_alloc_count);
+    // ESP_LOGI(TAG, "Emergency allocated RX buffer 0 (emergency: %lu)", emergency_alloc_count);
     return usb_rx_buffer[0];
 }
 
@@ -82,8 +85,8 @@ static void release_rx_buffer(void *buffer)
     for (int i = 0; i < USB_RX_BUF_NUM; i++) {
         if (buffer == usb_rx_buffer[i]) {
             usb_rx_buffer_used[i] = false;
-            buffer_release_count++;
-            ESP_LOGI(TAG, "Released RX buffer %d (total: %lu)", i, buffer_release_count);
+            // buffer_release_count++;
+            // ESP_LOGI(TAG, "Released RX buffer %d (total: %lu)", i, buffer_release_count);
             return;
         }
     }
@@ -220,13 +223,16 @@ esp_err_t send_bootup_event_to_host(uint8_t cap)
 
     ret = tud_vendor_n_write(0, buf_handle.payload, total_len);
 
-    if (ret < 0) {
+    if (ret == 0) {
         ESP_LOGE(TAG, "Failed to send USB packet, ret:%d", ret);
         free(buf_handle.payload);
         return ESP_FAIL;
     }
 
-    tud_vendor_n_flush(0); // 立马发出
+    tud_vendor_n_flush(0);
+
+    // Wait for TX completion - will block until TX is done
+    xSemaphoreTake(usb_tx_sem, portMAX_DELAY);
 
     free(buf_handle.payload);
 
@@ -270,7 +276,7 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
             
             expected_total = offset + payload_len;
 
-            ESP_LOGI(TAG, "Header: payload_len=%d, offset=%d, expected_total=%d", payload_len, offset, expected_total);
+            // ESP_LOGI(TAG, "Header: payload_len=%d, offset=%d, expected_total=%d", payload_len, offset, expected_total);
 
             if (expected_total > MAX_PAYLOAD_SIZE) {
                 ESP_LOGE(TAG, "Payload too large");
@@ -300,17 +306,17 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
 
         // 验证数据的完整性
         if (frame_active && received_total >= expected_total) {
-            ESP_LOGI(TAG, "Frame received (%d bytes)", expected_total);
+            // ESP_LOGI(TAG, "Frame received (%d bytes)", expected_total);
 
             // 使用预分配的缓冲区
             uint8_t *rx_buffer = get_available_rx_buffer();
             if (!rx_buffer) {
                 // 如果缓冲区耗尽，强制释放第一个缓冲区并继续处理
-                ESP_LOGW(TAG, "Buffer exhaustion, forcing release of buffer 0");
+                // ESP_LOGW(TAG, "Buffer exhaustion, forcing release of buffer 0");
                 release_rx_buffer(usb_rx_buffer[0]);
                 rx_buffer = get_available_rx_buffer();
                 if (!rx_buffer) {
-                    ESP_LOGE(TAG, "Critical: Still no buffer available after force release");
+                    // ESP_LOGE(TAG, "Critical: Still no buffer available after force release");
                     frame_active = false;
                     received_total = 0;
                     expected_total = 0;
@@ -328,10 +334,10 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
             // 使用阻塞方式入队，确保数据不丢失
             if (xQueueSend(frame_queue, &frame, portMAX_DELAY) != pdTRUE) {
                 // 如果100ms内无法入队，说明队列已满，这是异常情况
-                ESP_LOGE(TAG, "Queue full timeout, dropping frame (this should not happen)");
+                // ESP_LOGE(TAG, "Queue full timeout, dropping frame (this should not happen)");
                 release_rx_buffer(frame.data);
             } else {
-                ESP_LOGI(TAG, "Frame queued successfully, len: %d", expected_total);
+                // ESP_LOGI(TAG, "Frame queued successfully, len: %d", expected_total);
                 
                 // 打印当前队列状态
                 print_queue_status();
@@ -357,11 +363,11 @@ static void print_queue_status(void)
             }
         }
         
-        ESP_LOGI(TAG, "Queue status: %d/%d frames, Buffers: %d/%d used", 
-                 queue_count, FRAME_QUEUE_SIZE, used_buffers, USB_RX_BUF_NUM);
+        // ESP_LOGI(TAG, "Queue status: %d/%d frames, Buffers: %d/%d used", 
+        //          queue_count, FRAME_QUEUE_SIZE, used_buffers, USB_RX_BUF_NUM);
         
         if (queue_count > FRAME_QUEUE_SIZE * 2 / 3) {
-            ESP_LOGW(TAG, "High queue utilization: %d%%", (queue_count * 100) / FRAME_QUEUE_SIZE);
+            // ESP_LOGW(TAG, "High queue utilization: %d%%", (queue_count * 100) / FRAME_QUEUE_SIZE);
         }
     }
 }
@@ -373,6 +379,16 @@ static interface_handle_t *esp_usb_init(void)
         ESP_LOGE(TAG, "TinyUSB init failed");
         return NULL;
     }
+
+    // Create TX semaphore
+    usb_tx_sem = xSemaphoreCreateBinary();
+    if (!usb_tx_sem) {
+        ESP_LOGE(TAG, "Failed to create TX semaphore");
+        return NULL;
+    }
+    // Initialize semaphore as taken
+    xSemaphoreGive(usb_tx_sem);
+
     xTaskCreate(tusb_device_task, "tusb_device_task", 10 * 1024, NULL, 14, NULL);
 
     // 创建接收队列
@@ -443,20 +459,36 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
 
     memcpy((uint8_t *)header + offset, buf_handle->payload, buf_handle->payload_len);
 
-
-    // 直接发送数据
-    ret = tud_vendor_n_write(0, sendbuf, total_len);
-    if (ret < 0) {
-        ESP_LOGE(TAG, "Failed to send USB packet, ret:%d", ret);
+    // Wait for TX completion - will block until TX is done
+    if(xSemaphoreTake(usb_tx_sem, 10)!= pdTRUE) {
         free(sendbuf);
         return ESP_FAIL;
     }
 
-    tud_vendor_n_flush(0); // 立即发出
-    free(sendbuf);
 
-    ESP_LOGI(TAG, "USB packet sent directly, total_len:%" PRId32, total_len);
+    if(tud_vendor_n_write_available(0) >total_len)
+    {
+        ret = tud_vendor_n_write(0, sendbuf, total_len);
+        if (ret == 0) {
+            ESP_LOGE(TAG, "Failed to send USB packet, ret:%d", ret);
+            free(sendbuf);
+            return ESP_FAIL;
+        }
+        tud_vendor_n_flush(0);
+    } else {
+        free(sendbuf);
+        return ESP_FAIL;
+    }
+
+
+    free(sendbuf);
     return buf_handle->payload_len;
+}
+
+void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes)
+{
+    // Give semaphore to indicate TX completion
+    xSemaphoreGive(usb_tx_sem);
 }
 
 static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t *buf_handle)
@@ -492,9 +524,6 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
 
     buf_handle->if_type = header->if_type;
     buf_handle->if_num = header->if_num;
-
-    // 打印队列状态，帮助监控处理速度
-    print_queue_status();
     
     return len;
 }
@@ -502,6 +531,12 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
 static void esp_usb_deinit(interface_handle_t *handle)
 {
     ESP_LOGI(TAG, "USB deinit");
+    
+    // Delete TX semaphore
+    if (usb_tx_sem) {
+        vSemaphoreDelete(usb_tx_sem);
+        usb_tx_sem = NULL;
+    }
     
     // 打印缓冲区使用统计
     ESP_LOGI(TAG, "Buffer stats - Allocated: %lu, Released: %lu, Emergency: %lu", 

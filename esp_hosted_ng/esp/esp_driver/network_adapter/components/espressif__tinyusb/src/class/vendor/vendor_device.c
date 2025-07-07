@@ -259,7 +259,8 @@ bool vendord_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint
 
     // Invoked callback if any
     if (tud_vendor_rx_cb) {
-      tud_vendor_rx_cb(itf, p_epbuf->epout, (uint16_t) xferred_bytes);
+      // tud_vendor_rx_cb(itf, p_epbuf->epout, (uint16_t) xferred_bytes);
+            tud_vendor_rx_cb(itf, p_vendor->rx.ff_buf, (uint16_t) xferred_bytes);
     }
 
     tu_edpt_stream_read_xfer(rhport, &p_vendor->rx.stream);
