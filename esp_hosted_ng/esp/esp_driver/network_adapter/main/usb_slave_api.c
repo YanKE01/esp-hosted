@@ -208,9 +208,9 @@ esp_err_t send_bootup_event_to_host(uint8_t cap)
 
     header->len = htole16(buf_handle.payload_len - sizeof(struct esp_payload_header));
 
-#if CONFIG_ESP_SDIO_CHECKSUM
     header->checksum = htole16(compute_checksum(buf_handle.payload, buf_handle.payload_len));
-#endif
+
+    ESP_LOGI(TAG, "Send bootup check: %x", header->checksum);
 
     // 构造USB包
     int32_t total_len = buf_handle.payload_len;
@@ -456,11 +456,14 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     offset = sizeof(struct esp_payload_header);
     header->offset = htole16(offset);
     header->packet_type = buf_handle->pkt_type;
+    header->checksum = 0;
 
     memcpy((uint8_t *)header + offset, buf_handle->payload, buf_handle->payload_len);
 
+    header->checksum = htole16(compute_checksum(sendbuf, offset + buf_handle->payload_len));
+
     // Wait for TX completion - will block until TX is done
-    if(xSemaphoreTake(usb_tx_sem, 10)!= pdTRUE) {
+    if(xSemaphoreTake(usb_tx_sem, portMAX_DELAY)!= pdTRUE) {
         free(sendbuf);
         return ESP_FAIL;
     }
@@ -475,6 +478,8 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
             return ESP_FAIL;
         }
         tud_vendor_n_flush(0);
+
+        vTaskDelay(5);
     } else {
         free(sendbuf);
         return ESP_FAIL;

@@ -2,8 +2,7 @@
 
 #include "esp.h"
 
-#define ESP_RX_BUFFER_SIZE 2048  // 增加到与SDIO一致的大小
-#define USB_RX_URB_COUNT 30       // 增加URB数量提高接收性能
+#define ESP_RX_BUFFER_SIZE 1920  // 增加到与SDIO一致的大小
 
 struct esp_usb_context
 {
@@ -15,10 +14,11 @@ struct esp_usb_context
     struct sk_buff_head rx_q[MAX_PRIORITY_QUEUES];
     
     // 异步接收相关
-    struct urb *rx_urb[USB_RX_URB_COUNT];
-    u8 *rx_buffer[USB_RX_URB_COUNT];
-    spinlock_t rx_lock;
-    atomic_t rx_active;
+    struct urb *rx_urb;
+    uint8_t *rx_buffer;  // 使用 kmalloc 分配的内存
+    int usb_rx_pipe_status;
+    struct work_struct rx_work;
+    int rx_urb_failed_count;
 };
 
 enum
