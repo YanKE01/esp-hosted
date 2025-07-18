@@ -162,7 +162,7 @@ void push_urb_data(struct esp_usb_context *context, u8 *data, u32 len)
     struct esp_payload_header *header;
     struct sk_buff *skb = NULL;
     uint8_t prio = PRIO_Q_LOW;
-    uint16_t computed_checksum, received_checksum;
+    uint16_t computed_checksum;
     
     if (!context || !data || len < 2)
     {
