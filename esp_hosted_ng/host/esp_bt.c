@@ -113,7 +113,7 @@ static ESP_BT_SEND_FRAME_PROTOTYPE()
 
 		/* Populate new SKB */
 		skb_copy_from_linear_data(skb, pos, skb->len);
-		skb_put(new_skb, skb->len);
+		skb_put(new_skb, pad_len + skb->len);
 
 		/* Replace old SKB */
 		dev_kfree_skb_any(skb);
@@ -138,6 +138,8 @@ static ESP_BT_SEND_FRAME_PROTOTYPE()
 
 	if (adapter->capabilities & ESP_CHECKSUM_ENABLED)
 		hdr->checksum = cpu_to_le16(compute_checksum(skb->data, (len + pad_len)));
+
+    esp_hex_dump_verbose("bt_tx_final: ", skb->data, pad_len + len);
 
 	ret = esp_send_packet(adapter, skb);
 
@@ -208,12 +210,8 @@ int esp_init_bt(struct esp_adapter *adapter)
 
 	hdev->bus = INVALID_HDEV_BUS;
 
-	if (adapter->if_type == ESP_IF_TYPE_SDIO)
-		hdev->bus   = HCI_SDIO;
-    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0))
-	else if (adapter->if_type == ESP_IF_TYPE_SPI)
-		hdev->bus   = HCI_SPI;
-    #endif
+	hdev->bus   = HCI_USB;
+
 
 	if (hdev->bus == INVALID_HDEV_BUS) {
 

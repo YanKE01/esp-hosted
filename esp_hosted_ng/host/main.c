@@ -37,7 +37,7 @@ static u32 clockspeed = 0;
 extern u8 ap_bssid[MAC_ADDR_LEN];
 extern volatile u8 host_sleep;
 u32 raw_tp_mode = 0;
-int log_level = ESP_INFO;
+int log_level = ESP_VERBOSE;
 #define VERSION_BUFFER_SIZE 50
 char version_str[VERSION_BUFFER_SIZE];
 
@@ -829,6 +829,8 @@ static void process_rx_packet(struct esp_adapter *adapter, struct sk_buff *skb)
 			type = skb->data;
 			hci_skb_pkt_type(skb) = *type;
 			skb_pull(skb, 1);
+
+			print_hex_dump(KERN_INFO, "[hci_recv_frame] skb->data: ", DUMP_PREFIX_OFFSET, 16, 1, skb->data, skb->len, false);
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
 			if (hci_recv_frame(hdev, skb)) {

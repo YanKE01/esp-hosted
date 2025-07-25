@@ -262,13 +262,16 @@ static void tusb_device_task(void *pvParameters)
 void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
 {
     while (tud_vendor_n_available(itf)) {
-        uint8_t temp_buf[bufsize];
+        uint8_t temp_buf[bufsize] = {};
         int read_len = tud_vendor_n_read(itf, temp_buf, sizeof(temp_buf));
         if (read_len <= 0) {
             return;
         }
 
-        if (!frame_active && read_len >= sizeof(struct esp_payload_header)) {
+        ESP_LOGI(TAG, "tud_vendor_rx_cb: %d", read_len);
+        ESP_LOG_BUFFER_HEXDUMP("tud_vendor_rx_cb", temp_buf, read_len, ESP_LOG_INFO);
+
+        if (!frame_active) {
             // 解析ESP payload header
             struct esp_payload_header *header = (struct esp_payload_header *)temp_buf;
             uint16_t payload_len = le16toh(header->len);
@@ -276,7 +279,7 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize)
 
             expected_total = offset + payload_len;
 
-            // ESP_LOGI(TAG, "Header: payload_len=%d, offset=%d, expected_total=%d", payload_len, offset, expected_total);
+            ESP_LOGI(TAG, "Header: payload_len=%d, offset=%d, expected_total=%d", payload_len, offset, expected_total);
 
             if (expected_total > MAX_PAYLOAD_SIZE) {
                 ESP_LOGE(TAG, "Payload too large");
@@ -452,7 +455,7 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     header->if_type = buf_handle->if_type;
     header->if_num = buf_handle->if_num;
     header->len = htole16(buf_handle->payload_len);
-    header->reserved2 = buf_handle->flag;
+    header->flags = buf_handle->flag;
     offset = sizeof(struct esp_payload_header);
     header->offset = htole16(offset);
     header->packet_type = buf_handle->pkt_type;
@@ -467,6 +470,8 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
         free(sendbuf);
         return ESP_FAIL;
     }
+
+    ESP_LOGI(TAG, "esp_usb_write: %ld", total_len);
 
     if (tud_vendor_n_write_available(0) > total_len) {
         ret = tud_vendor_n_write(0, sendbuf, total_len);

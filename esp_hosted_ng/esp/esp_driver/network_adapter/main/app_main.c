@@ -565,7 +565,7 @@ void process_rx_pkt(interface_buffer_handle_t *buf_handle)
         }
 #if defined(CONFIG_BT_ENABLED) && BLUETOOTH_HCI
         else if (buf_handle->if_type == ESP_HCI_IF) {
-            /*ESP_LOG_BUFFER_HEXDUMP("H->S BT", payload, payload_len, ESP_LOG_INFO);*/
+            ESP_LOG_BUFFER_HEXDUMP("H->S BT", payload, payload_len, ESP_LOG_INFO);
             process_hci_rx_pkt(payload, payload_len);
         }
 #endif

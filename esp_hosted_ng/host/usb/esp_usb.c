@@ -501,6 +501,7 @@ static struct sk_buff *read_packet(struct esp_adapter *adapter)
 
     if (skb)
     {
+        print_hex_dump(KERN_INFO, "", DUMP_PREFIX_OFFSET, 16, 1, skb->data, skb->len, false);
         esp_dbg("USB read_packet: got skb len=%d\n", skb->len);
     }
 
@@ -724,6 +725,7 @@ int esp_init_interface_layer(struct esp_adapter *adapter, u32 speed)
 
     adapter->if_context = &usb_context;
     adapter->if_ops = &if_ops;
+	adapter->if_type = ESP_IF_TYPE_SPI;
     usb_context.adapter = adapter;
 
     return usb_register(&esp_usb_driver);
