@@ -724,6 +724,7 @@ int esp_init_interface_layer(struct esp_adapter *adapter, u32 speed)
 
     adapter->if_context = &usb_context;
     adapter->if_ops = &if_ops;
+    adapter->if_type = ESP_IF_TYPE_SPI;
     usb_context.adapter = adapter;
 
     return usb_register(&esp_usb_driver);

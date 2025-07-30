@@ -452,7 +452,7 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     header->if_type = buf_handle->if_type;
     header->if_num = buf_handle->if_num;
     header->len = htole16(buf_handle->payload_len);
-    header->reserved2 = buf_handle->flag;
+    header->flags  = buf_handle->flag;
     offset = sizeof(struct esp_payload_header);
     header->offset = htole16(offset);
     header->packet_type = buf_handle->pkt_type;
