@@ -312,7 +312,7 @@ static int process_usb_rx(uint8_t const *buffer, uint16_t bufsize)
     /* Prepare frame for queue */
     frame.data = rx_buffer;
     frame.len = len + offset;
-    printf("USB RX: len=%u, data_ptr=%p\n", frame.len, frame.data);
+    // printf("USB RX: len=%u, data_ptr=%p\n", frame.len, frame.data);
     /* Send to queue - use timeout to avoid blocking forever */
     ret = xQueueSend(frame_queue, &frame, portMAX_DELAY);
     if (ret != pdTRUE) {
@@ -453,7 +453,7 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
     /* Allow write when available bytes are >= required length */
     if (tud_vendor_n_write_available(0) >= total_len) {
         ret = tud_vendor_n_write(0, sendbuf, total_len);
-        printf("USB TX: len=%" PRId32 ", data_ptr=%p\n", total_len, sendbuf);
+        // printf("USB TX: len=%" PRId32 ", data_ptr=%p\n", total_len, sendbuf);
         if (ret == 0) {
             ESP_LOGE(TAG, "Failed to send USB packet, ret:%d", ret);
             /* Release semaphore to avoid deadlock */
@@ -477,7 +477,7 @@ static int32_t esp_usb_write(interface_handle_t *handle, interface_buffer_handle
 void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes)
 {
     // Give semaphore to indicate TX completion
-    printf("USB TX complete: sent_bytes=%" PRIu32 "\n", sent_bytes);
+    // printf("USB TX complete: sent_bytes=%" PRIu32 "\n", sent_bytes);
     xSemaphoreGive(usb_tx_sem);
 }
 
@@ -514,7 +514,7 @@ static int esp_usb_read(interface_handle_t *if_handle, interface_buffer_handle_t
 
     buf_handle->if_type = header->if_type;
     buf_handle->if_num = header->if_num;
-    printf("USB Read out: len=%u, data_ptr=%p\n", len, buf_handle->payload);
+    // printf("USB Read out: len=%u, data_ptr=%p\n", len, buf_handle->payload);
     return len;
 }
 

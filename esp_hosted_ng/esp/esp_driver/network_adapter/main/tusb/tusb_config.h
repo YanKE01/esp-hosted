@@ -76,6 +76,10 @@ extern "C" {
 // Enable Device stack
 #define CFG_TUD_ENABLED       1
 
+#define CFG_TUD_DWC2_DMA_ENABLE     1       // Enable DMA
+#define CFG_TUD_MEM_CACHE_ENABLE     0
+#define CFG_TUSB_MEM_SECTION         TU_ATTR_ALIGNED(4) DRAM_ATTR
+
 /* USB DMA on some MCUs can only access a specific SRAM region with restriction on alignment.
  * Tinyusb use follows macros to declare transferring memory so that they can be put
  * into those specific section.

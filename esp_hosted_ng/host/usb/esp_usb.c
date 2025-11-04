@@ -126,7 +126,10 @@ static int esp_usb_tx_with_retry(struct esp_usb_context *context, u8 *data, u32 
 {
     int ret, retry_count = 0;
     int actual_len = 0;
+    int zlp_ret = 0;
+    int zlp_actual_len = 0;
 
+    // 发送数据包
     while (retry_count < USB_TX_RETRY_COUNT)
     {
         ret = usb_bulk_msg(context->udev, context->out_pipe,
@@ -134,6 +137,17 @@ static int esp_usb_tx_with_retry(struct esp_usb_context *context, u8 *data, u32 
 
         if (ret == 0 && actual_len == len)
         {
+            // 如果数据长度是端点大小的倍数，需要发送零长度包（ZLP）
+            if (len > 0 && (len % USB_EP_OUT_SIZE) == 0)
+            {
+                zlp_ret = usb_bulk_msg(context->udev, context->out_pipe,
+                                       NULL, 0, &zlp_actual_len, USB_TX_TIMEOUT_MS);
+                if (zlp_ret != 0)
+                {
+                    esp_warn("USB TX ZLP failed: ret=%d\n", zlp_ret);
+                    // ZLP失败不应该导致整个传输失败，但记录警告
+                }
+            }
             atomic_inc(&usb_tx_success_count);
             return 0; // 成功
         }
