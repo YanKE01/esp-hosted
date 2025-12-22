@@ -17,6 +17,12 @@ menu "Example Configuration"
             bool "SPI interface"
             help
                 Enable/Disable SPI host interface
+
+        config ESP_USB_HOST_INTERFACE
+            bool "USB interface"
+            depends on SOC_USB_OTG_SUPPORTED
+            help
+                Enable/Disable USB host interface
     endchoice
 
     menu "SPI Configuration"

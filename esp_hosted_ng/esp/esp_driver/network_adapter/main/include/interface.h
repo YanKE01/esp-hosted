@@ -40,6 +40,7 @@ typedef void *wlan_buf_handle_t;
 typedef enum {
     SDIO = 0,
     SPI = 1,
+    USB = 2,
 } transport_layer;
 
 typedef enum {
@@ -95,5 +96,5 @@ interface_context_t * interface_insert_driver(int (*callback)(uint8_t val));
 int interface_remove_driver();
 /*void generate_startup_event(uint8_t cap);*/
 esp_err_t send_to_host(uint8_t prio_q_idx, interface_buffer_handle_t *buf_handle);
-esp_err_t send_bootup_event_to_host(uint8_t cap);
+esp_err_t send_bootup_event_to_host(uint32_t cap);
 #endif

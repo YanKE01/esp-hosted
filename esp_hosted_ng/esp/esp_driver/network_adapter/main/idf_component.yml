@@ -1,0 +1,5 @@
+dependencies:
+  espressif/tinyusb:
+    version: "0.18.0~2"
+    matches:
+       - if: "${HOSTED_NG_ENABLE_TINYUSB} == True"

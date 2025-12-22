@@ -441,17 +441,20 @@ void deinitialize_bluetooth(void)
 #endif
 }
 
-uint8_t get_bluetooth_capabilities(void)
+uint32_t get_bluetooth_capabilities(void)
 {
-    uint8_t cap = 0;
+    uint32_t cap = 0;
     ESP_LOGI(BT_TAG, "- BT/BLE");
 #if BLUETOOTH_HCI
 #if CONFIG_ESP_SPI_HOST_INTERFACE
     ESP_LOGI(BT_TAG, "   - HCI Over SPI");
     cap |= ESP_BT_SPI_SUPPORT;
-#else
+#elif CONFIG_ESP_SDIO_HOST_INTERFACE
     ESP_LOGI(BT_TAG, "   - HCI Over SDIO");
     cap |= ESP_BT_SDIO_SUPPORT;
+#elif CONFIG_ESP_USB_HOST_INTERFACE
+    ESP_LOGI(BT_TAG, "   - HCI Over USB");
+    cap |= ESP_BT_USB_SUPPORT;
 #endif
 #elif BLUETOOTH_UART
     ESP_LOGI(BT_TAG, "   - HCI Over UART");

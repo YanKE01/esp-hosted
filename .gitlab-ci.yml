@@ -70,6 +70,19 @@ build_fw_esp32s3_spi:
   tags:
     - build_fw
 
+build_fw_esp32s3_usb:
+  stage: build_firmware
+  image: $CI_DOCKER_REGISTRY/esp-env-v5.5:3
+  variables:
+    IDF_TARGET: esp32s3
+  script:
+    - .gitlab/ci/build_firmware.sh $IDF_TARGET usb
+  rules:
+    - changes:
+      - esp_hosted_ng/esp/esp_driver/network_adapter/**/*
+  tags:
+    - build_fw
+
 build_fw_esp32c2_spi:
   stage: build_firmware
   image: $CI_DOCKER_REGISTRY/esp-env-v5.5:3
@@ -220,6 +233,50 @@ build_host_spi_linux_5.4.0:
   script:
     - cd esp_hosted_ng/host
     - make check target=spi
+  rules:
+    - changes:
+      - esp_hosted_ng/host/**/*
+  tags:
+    - hosted_runner_2
+
+build_host_usb_linux_6.8.0:
+  stage: build_host
+  script:
+    - cd esp_hosted_ng/host
+    - make target=usb
+  rules:
+    - changes:
+      - esp_hosted_ng/host/**/*
+  tags:
+    - hosted_runner_4
+
+build_host_usb_linux_6.14.0:
+  stage: build_host
+  script:
+    - cd esp_hosted_ng/host
+    - make target=usb
+  rules:
+    - changes:
+      - esp_hosted_ng/host/**/*
+  tags:
+    - hosted_runner6
+
+build_host_usb_linux_5.15.0:
+  stage: build_host
+  script:
+    - cd esp_hosted_ng/host
+    - make check target=usb
+  rules:
+    - changes:
+      - esp_hosted_ng/host/**/*
+  tags:
+    - hosted_runner_3
+
+build_host_usb_linux_5.4.0:
+  stage: build_host
+  script:
+    - cd esp_hosted_ng/host
+    - make check target=usb
   rules:
     - changes:
       - esp_hosted_ng/host/**/*

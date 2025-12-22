@@ -22,6 +22,7 @@
 
 #define ESP_IF_TYPE_SDIO        1
 #define ESP_IF_TYPE_SPI         2
+#define ESP_IF_TYPE_USB         3
 
 /* Network link status */
 #define ESP_LINK_DOWN           0

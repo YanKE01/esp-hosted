@@ -232,7 +232,7 @@ static void register_hs_disable_pin(uint32_t gpio_num)
 }
 #endif
 
-esp_err_t send_bootup_event_to_host(uint8_t cap)
+esp_err_t send_bootup_event_to_host(uint32_t cap)
 {
     struct esp_payload_header *header = NULL;
     struct esp_internal_bootup_event *event = NULL;
@@ -274,8 +274,8 @@ esp_err_t send_bootup_event_to_host(uint8_t cap)
 
     /* TLV - Capability */
     *pos = ESP_BOOTUP_CAPABILITY;         pos++; len++;
-    *pos = LENGTH_1_BYTE;                 pos++; len++;
-    *pos = cap;                           pos++; len++;
+    *pos = LENGTH_4_BYTE;                 pos++; len++;
+    *(uint32_t *)pos = htole32(cap);      pos += 4; len += 4;
 
     /* TLV - FW data */
     *pos = ESP_BOOTUP_FW_DATA;            pos++; len++;

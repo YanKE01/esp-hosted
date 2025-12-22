@@ -25,6 +25,21 @@ else()
 endif()
 
 set(PROJECT_VER "${PROJECT_VER}")
+
+# Read sdkconfig before project() to set environment variable for component manager
+set(SDKCONFIG_FILE "${CMAKE_SOURCE_DIR}/sdkconfig")
+set(HOSTED_NG_ENABLE_TINYUSB "False")
+if(EXISTS "${SDKCONFIG_FILE}")
+    file(STRINGS "${SDKCONFIG_FILE}" SDKCONFIG_LINES)
+    list(FIND SDKCONFIG_LINES "CONFIG_ESP_USB_HOST_INTERFACE=y" USB_FOUND)
+    if(USB_FOUND GREATER_EQUAL 0)
+        set(HOSTED_NG_ENABLE_TINYUSB "True")
+    endif()
+endif()
+
+# Set environment variable for component manager (must be before project())
+set(ENV{HOSTED_NG_ENABLE_TINYUSB} ${HOSTED_NG_ENABLE_TINYUSB})
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 set(EXCLUDE_COMPONENTS wpa_supplicant)
 project(network_adapter)

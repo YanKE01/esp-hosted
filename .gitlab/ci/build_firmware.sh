@@ -17,7 +17,7 @@ echo "Exporting variables"
 
 cd ../network_adapter
 
-# Check if the second argument (assumed to be a string) matches "spi"
+# Check if the second argument (assumed to be a string) matches "spi" or "usb"
 if [ "$2" = "spi" ]; then
     # Check if sdkconfig.ci exists
     if [ -f "sdkconfig.ci" ]; then
@@ -32,6 +32,18 @@ fi
 
 echo "Setting target as $TGT_NAME"
 idf.py set-target "$TGT_NAME"
+
+# For USB, append CONFIG_ESP_USB_HOST_INTERFACE=y to sdkconfig after set-target
+if [ "$2" = "usb" ]; then
+    if [ -f "sdkconfig" ]; then
+        echo "Appending CONFIG_ESP_USB_HOST_INTERFACE=y to sdkconfig"
+        echo "CONFIG_ESP_USB_HOST_INTERFACE=y" >> sdkconfig
+    else
+        echo "Error: sdkconfig does not exist after set-target"
+        exit 1
+    fi
+fi
+
 idf.py build
 
 # Check if the build was successful

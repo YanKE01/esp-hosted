@@ -101,17 +101,20 @@ uint8_t dev_mac[MAC_ADDR_LEN] = {0};
 extern void wake_host();
 #endif
 
-static uint8_t get_capabilities()
+static uint32_t get_capabilities()
 {
-    uint8_t cap = 0;
+    uint32_t cap = 0;
 
     ESP_LOGI(TAG, "Supported features are:");
 #if CONFIG_ESP_SPI_HOST_INTERFACE
     ESP_LOGI(TAG, "- WLAN over SPI");
     cap |= ESP_WLAN_SPI_SUPPORT;
-#else
+#elif CONFIG_ESP_SDIO_HOST_INTERFACE
     ESP_LOGI(TAG, "- WLAN over SDIO");
     cap |= ESP_WLAN_SDIO_SUPPORT;
+#elif CONFIG_ESP_USB_HOST_INTERFACE
+    ESP_LOGI(TAG, "- WLAN over USB");
+    cap |= ESP_WLAN_USB_SUPPORT;
 #endif
 
 #if CONFIG_ESP_SPI_CHECKSUM || CONFIG_ESP_SDIO_CHECKSUM
@@ -121,7 +124,7 @@ static uint8_t get_capabilities()
 #ifdef CONFIG_BT_ENABLED
     cap |= get_bluetooth_capabilities();
 #endif
-    ESP_LOGI(TAG, "Capabilities: 0x%x", cap);
+    ESP_LOGI(TAG, "Capabilities: 0x%lx", cap);
 
     return cap;
 }
@@ -673,7 +676,7 @@ void app_main()
 {
     esp_err_t ret;
     uint8_t prio_q_idx = 0;
-    uint8_t capa = 0;
+    uint32_t capa = 0;
 
 #ifdef CONFIG_BT_ENABLED
     uint8_t mac[MAC_ADDR_LEN] = {0};

@@ -206,10 +206,13 @@ void print_capabilities(u32 cap)
 		esp_info("\t * WLAN on SDIO\n");
 	else if (cap & ESP_WLAN_SPI_SUPPORT)
 		esp_info("\t * WLAN on SPI\n");
+	else if (cap & ESP_WLAN_USB_SUPPORT)
+		esp_info("\t * WLAN on USB\n");
 
 	if ((cap & ESP_BT_UART_SUPPORT) ||
 		    (cap & ESP_BT_SDIO_SUPPORT) ||
-		    (cap & ESP_BT_SPI_SUPPORT)) {
+		    (cap & ESP_BT_SPI_SUPPORT) ||
+			(cap & ESP_BT_USB_SUPPORT)) {
 		esp_info("\t * BT/BLE\n");
 		if (cap & ESP_BT_UART_SUPPORT)
 			esp_info("\t   - HCI over UART\n");
@@ -217,6 +220,8 @@ void print_capabilities(u32 cap)
 			esp_info("\t   - HCI over SDIO\n");
 		if (cap & ESP_BT_SPI_SUPPORT)
 			esp_info("\t   - HCI over SPI\n");
+		if (cap & ESP_BT_USB_SUPPORT)
+			esp_info("\t   - HCI over USB\n");
 
 		if ((cap & ESP_BLE_ONLY_SUPPORT) && (cap & ESP_BR_EDR_ONLY_SUPPORT))
 			esp_info("\t   - BT/BLE dual mode\n");
@@ -231,10 +236,13 @@ static void init_bt(struct esp_adapter *adapter)
 {
 
 	if ((adapter->capabilities & ESP_BT_SPI_SUPPORT) ||
-		(adapter->capabilities & ESP_BT_SDIO_SUPPORT)) {
+		(adapter->capabilities & ESP_BT_SDIO_SUPPORT) ||
+		(adapter->capabilities & ESP_BT_USB_SUPPORT)) {
 		msleep(200);
 		esp_info("ESP Bluetooth init\n");
 		esp_init_bt(adapter);
+	} else {
+		esp_info("ESP Bluetooth not supported, %lx\n",adapter->capabilities);
 	}
 }
 
@@ -316,7 +324,8 @@ static int process_event_esp_bootup(struct esp_adapter *adapter, u8 *evt_buf, u8
 
 		switch (*pos) {
 		case ESP_BOOTUP_CAPABILITY:
-			adapter->capabilities = *(pos + 2);
+            adapter->capabilities = get_unaligned_le32(pos + 2);
+            esp_info("Bootup Event capabilities: 0x%x\n", adapter->capabilities);
 			break;
 		case ESP_BOOTUP_FIRMWARE_CHIP_ID:
 			ret = esp_validate_chipset(adapter, *(pos + 2));

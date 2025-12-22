@@ -113,7 +113,7 @@ static ESP_BT_SEND_FRAME_PROTOTYPE()
 
 		/* Populate new SKB */
 		skb_copy_from_linear_data(skb, pos, skb->len);
-		skb_put(new_skb, skb->len);
+		skb_put(new_skb, pad_len + skb->len);
 
 		/* Replace old SKB */
 		dev_kfree_skb_any(skb);
@@ -214,6 +214,8 @@ int esp_init_bt(struct esp_adapter *adapter)
 	else if (adapter->if_type == ESP_IF_TYPE_SPI)
 		hdev->bus   = HCI_SPI;
     #endif
+    else if (adapter->if_type == ESP_IF_TYPE_USB)
+		hdev->bus   = HCI_USB;
 
 	if (hdev->bus == INVALID_HDEV_BUS) {
 
@@ -221,6 +223,8 @@ int esp_init_bt(struct esp_adapter *adapter)
 			esp_err("Kernel version does not support HCI over SDIO BUS\n");
 		} else if (adapter->if_type == ESP_IF_TYPE_SPI) {
 			esp_err("Kernel version does not support HCI over SPI BUS\n");
+		} else if (adapter->if_type == ESP_IF_TYPE_USB) {
+			esp_err("Kernel version does not support HCI over USB BUS\n");
 		} else {
 			esp_err("HCI over expected BUS[%u] is not supported\n", adapter->if_type);
 		}

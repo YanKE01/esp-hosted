@@ -259,11 +259,17 @@ void debug_log_firmware_version(void)
 #else
     ESP_LOGI(TAG, "                Transport used :: SPI only                      ");
 #endif
-#else
+#elif CONFIG_ESP_SDIO_HOST_INTERFACE
 #if BLUETOOTH_UART
     ESP_LOGI(TAG, "                Transport used :: SDIO + UART                   ");
 #else
     ESP_LOGI(TAG, "                Transport used :: SDIO only                     ");
+#endif
+#elif CONFIG_ESP_USB_HOST_INTERFACE
+#if BLUETOOTH_UART
+    ESP_LOGI(TAG, "                Transport used :: USB + UART                   ");
+#else
+    ESP_LOGI(TAG, "                Transport used :: USB only                     ");
 #endif
 #endif
     ESP_LOGI(TAG, "*********************************************************************");
