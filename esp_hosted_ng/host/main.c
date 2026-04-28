@@ -776,7 +776,7 @@ static void process_rx_packet(struct esp_adapter *adapter, struct sk_buff *skb)
 	offset = le16_to_cpu(payload_header->offset);
 
 	if (payload_header->reserved2 == 0xFF) {
-		esp_hex_dump("Wake up packet: ", skb->data, len+offset);
+		// esp_hex_dump("Wake up packet: ", skb->data, len+offset);
 	}
 
 	if (adapter->capabilities & ESP_CHECKSUM_ENABLED) {

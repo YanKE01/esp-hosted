@@ -137,7 +137,10 @@ void tud_umount_cb(void)
 void tud_suspend_cb(bool remote_wakeup_en)
 {
     (void)remote_wakeup_en;
-    ESP_LOGI(TAG, "USB suspended");
+    ESP_LOGI(TAG, "USB device suspended");
+    if (context.event_handler) {
+        context.event_handler(ESP_CLOSE_DATA_PATH);
+    }
 }
 
 void tud_resume_cb(void)

@@ -1851,7 +1851,7 @@ int cmd_get_rssi(struct esp_wifi_device *priv)
 	}
 
 	if (priv->if_type != ESP_STA_IF) {
-		esp_err("Invalid interface\n");
+		esp_dbg("Invalid interface\n");
 		return -EINVAL;
 	}
 
